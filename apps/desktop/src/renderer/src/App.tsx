@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CoreProvider } from "@multica/core/platform";
 import { pickLocale, type SupportedLocale } from "@multica/core/i18n";
 import { useAuthStore } from "@multica/core/auth";
+import { useConfigStore } from "@multica/core/config";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import { workspaceKeys, workspaceListOptions } from "@multica/core/workspace/queries";
 import { api } from "@multica/core/api";
@@ -37,6 +38,7 @@ const HTML_LANG: Record<SupportedLocale, string> = {
 function AppContent() {
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
+  const localAuth = useConfigStore((s) => s.authMode === "local");
   const qc = useQueryClient();
   // Deep-link login runs loginWithToken → syncToken → listWorkspaces →
   // setQueryData sequentially. loginWithToken sets user+isLoading=false
@@ -95,6 +97,12 @@ function AppContent() {
   // Sync token and start the daemon whenever the user logs in.
   useEffect(() => {
     if (!user) return;
+    if (localAuth) {
+      void window.daemonAPI.autoStart().catch((err) => {
+        console.error("Failed to start daemon in local auth mode", err);
+      });
+      return;
+    }
     const token = localStorage.getItem("multica_token");
     if (!token) return;
     const userId = user.id;
@@ -106,7 +114,7 @@ function AppContent() {
         console.error("Failed to sync daemon on login", err);
       }
     })();
-  }, [user]);
+  }, [user, localAuth]);
 
   // When a user who started the session with zero workspaces creates their
   // first one, restart the daemon so it picks up the new workspace

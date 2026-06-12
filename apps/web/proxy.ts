@@ -21,6 +21,17 @@ const LEGACY_ROUTE_SEGMENTS = new Set([
   "settings",
 ]);
 
+function localAuthEnabled(): boolean {
+  const mode = (process.env.AUTH_MODE || process.env.NEXT_PUBLIC_AUTH_MODE || "local")
+    .trim()
+    .toLowerCase();
+  return mode === "local";
+}
+
+function localWorkspaceSlug(): string {
+  return (process.env.LOCAL_WORKSPACE_SLUG || "local").trim() || "local";
+}
+
 function resolveLocale(req: NextRequest): string {
   return resolveLocaleFromSignals({
     cookieLocale: req.cookies.get(LOCALE_COOKIE)?.value,
@@ -46,6 +57,8 @@ export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const hasSession = req.cookies.has("multica_logged_in");
   const lastSlug = req.cookies.get("last_workspace_slug")?.value;
+  const isLocalAuth = localAuthEnabled();
+  const fallbackSlug = isLocalAuth ? localWorkspaceSlug() : "";
 
   // --- Legacy URL redirect: /issues/... → /{slug}/issues/... ---
   // Old bookmarks and clients that hit us before the slug migration would
@@ -54,14 +67,14 @@ export function proxy(req: NextRequest) {
   if (LEGACY_ROUTE_SEGMENTS.has(firstSegment)) {
     const url = req.nextUrl.clone();
 
-    if (!hasSession) {
+    if (!hasSession && !isLocalAuth) {
       url.pathname = "/login";
       return NextResponse.redirect(url);
     }
 
-    if (lastSlug) {
+    if (lastSlug || fallbackSlug) {
       // Preserve deep-link path + query: /issues/abc → /{lastSlug}/issues/abc
-      url.pathname = `/${lastSlug}${pathname}`;
+      url.pathname = `/${lastSlug || fallbackSlug}${pathname}`;
       return NextResponse.redirect(url);
     }
 
@@ -73,9 +86,9 @@ export function proxy(req: NextRequest) {
   }
 
   // --- Root path: redirect logged-in users to their last workspace ---
-  if (pathname === "/" && hasSession && lastSlug) {
+  if (pathname === "/" && ((hasSession && lastSlug) || fallbackSlug)) {
     const url = req.nextUrl.clone();
-    url.pathname = `/${lastSlug}/issues`;
+    url.pathname = `/${lastSlug || fallbackSlug}/issues`;
     return NextResponse.redirect(url);
   }
 

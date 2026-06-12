@@ -36,8 +36,8 @@ const nextConfig: NextConfig = {
   },
   async rewrites() {
     return {
-      // Run before file-system routes so /docs isn't shadowed by the
-      // [workspaceSlug] dynamic segment.
+      // Run before file-system routes so backend proxies aren't shadowed by
+      // the top-level [workspaceSlug] dynamic segment.
       beforeFiles: [
         {
           source: "/docs",
@@ -47,8 +47,6 @@ const nextConfig: NextConfig = {
           source: "/docs/:path*",
           destination: `${docsUrl}/docs/:path*`,
         },
-      ],
-      afterFiles: [
         {
           source: "/api/:path*",
           destination: `${remoteApiUrl}/api/:path*`,
@@ -66,6 +64,7 @@ const nextConfig: NextConfig = {
           destination: `${remoteApiUrl}/uploads/:path*`,
         },
       ],
+      afterFiles: [],
       fallback: [],
     };
   },

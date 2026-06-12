@@ -27,6 +27,9 @@ type MembershipChecker interface {
 // SlugResolver translates a workspace slug to its UUID.
 type SlugResolver func(ctx context.Context, slug string) (workspaceID string, err error)
 
+// LocalUserResolver returns the local-mode user ID when auth is disabled.
+type LocalUserResolver func(ctx context.Context) (userID string, err error)
+
 // PATResolver resolves a Personal Access Token to a user ID.
 type PATResolver interface {
 	ResolveToken(ctx context.Context, token string) (userID string, ok bool)
@@ -741,9 +744,14 @@ func writeWSAuthErrorAndClose(conn *websocket.Conn, payload []byte, attrs ...any
 	conn.Close()
 }
 
-// HandleWebSocket upgrades an HTTP connection to WebSocket with cookie or
-// first-message auth.
-func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug SlugResolver, w http.ResponseWriter, r *http.Request) {
+// HandleWebSocket upgrades an HTTP connection to WebSocket with cookie,
+// local-mode, or first-message auth.
+func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug SlugResolver, w http.ResponseWriter, r *http.Request, localResolvers ...LocalUserResolver) {
+	var localResolver LocalUserResolver
+	if len(localResolvers) > 0 {
+		localResolver = localResolvers[0]
+	}
+
 	workspaceID := r.URL.Query().Get("workspace_id")
 	if workspaceID == "" {
 		if slug := r.URL.Query().Get("workspace_slug"); slug != "" && resolveSlug != nil {
@@ -765,6 +773,19 @@ func HandleWebSocket(hub *Hub, mc MembershipChecker, pr PATResolver, resolveSlug
 		uid, errMsg := authenticateToken(cookie.Value, pr, r.Context())
 		if errMsg != "" {
 			http.Error(w, errMsg, http.StatusUnauthorized)
+			return
+		}
+		if !mc.IsMember(r.Context(), uid, workspaceID) {
+			http.Error(w, `{"error":"not a member of this workspace"}`, http.StatusForbidden)
+			return
+		}
+		userID = uid
+	}
+	if userID == "" && localResolver != nil {
+		uid, err := localResolver(r.Context())
+		if err != nil {
+			slog.Warn("ws: local identity failed", "workspace_id", workspaceID, "error", err)
+			http.Error(w, `{"error":"local identity unavailable"}`, http.StatusInternalServerError)
 			return
 		}
 		if !mc.IsMember(r.Context(), uid, workspaceID) {

@@ -210,6 +210,23 @@ func runSetupSelfHost(cmd *cobra.Command, args []string) error {
 	fmt.Fprintf(os.Stderr, "  app_url:    %s\n", appURL)
 	printConfigLocation(profile)
 
+	ctx, cancel := cli.APIContext(context.Background())
+	localAuth := serverUsesLocalAuth(ctx, serverURL)
+	cancel()
+	if localAuth {
+		fmt.Fprintln(os.Stderr, "\nLocal auth mode detected; skipping browser login.")
+		if err := autoWatchWorkspaces(cmd); err != nil {
+			fmt.Fprintf(os.Stderr, "\nCould not auto-configure workspaces: %v\n", err)
+			fmt.Fprintf(os.Stderr, "Run 'multica workspace list' and 'multica workspace watch <id>' to set up manually.\n")
+		}
+		fmt.Fprintln(os.Stderr, "\nStarting daemon...")
+		if err := runDaemonBackground(cmd); err != nil {
+			return fmt.Errorf("start daemon: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "\n✓ Setup complete! Your machine is now connected to Multica.")
+		return nil
+	}
+
 	// Authenticate.
 	fmt.Fprintln(os.Stderr, "")
 	if err := runLogin(cmd, args); err != nil {

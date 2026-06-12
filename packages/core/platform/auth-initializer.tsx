@@ -18,6 +18,7 @@ import { setCurrentWorkspace } from "./workspace-storage";
 import type { ClientIdentity } from "./types";
 import type { StorageAdapter } from "../types/storage";
 import type { User } from "../types";
+import type { AppConfigResponse } from "../api/schemas";
 
 const logger = createLogger("auth");
 
@@ -45,34 +46,29 @@ export function AuthInitializer({
     // reads this cookie, so it has to be present before the user hits submit.
     captureSignupSource();
 
-    // Fetch app config (CDN domain, PostHog key, …) in the background — non-blocking.
-    api
-      .getConfig()
-      .then((cfg) => {
-        if (cfg.cdn_domain) configStore.getState().setCdnDomain(cfg.cdn_domain);
-        configStore.getState().setAuthConfig({
-          allowSignup: cfg.allow_signup,
-          googleClientId: cfg.google_client_id,
-          // Old servers omit this field — treat that as "creation allowed"
-          // (the managed-cloud default) rather than blocking the UI.
-          workspaceCreationDisabled: cfg.workspace_creation_disabled === true,
-        });
-        configStore.getState().setDaemonConfig({
-          daemonServerUrl: cfg.daemon_server_url,
-          daemonAppUrl: cfg.daemon_app_url,
-        });
-        if (cfg.posthog_key) {
-          initAnalytics({
-            key: cfg.posthog_key,
-            host: cfg.posthog_host || "",
-            appVersion: identity?.version,
-            environment: cfg.analytics_environment,
-          });
-        }
-      })
-      .catch(() => {
-        /* config is optional — legacy file card matching degrades gracefully */
+    const applyConfig = (cfg: AppConfigResponse) => {
+      if (cfg.cdn_domain) configStore.getState().setCdnDomain(cfg.cdn_domain);
+      configStore.getState().setAuthConfig({
+        authMode: cfg.auth_mode || "auth",
+        allowSignup: cfg.allow_signup,
+        googleClientId: cfg.google_client_id,
+        // Old servers omit this field — treat that as "creation allowed"
+        // (the managed-cloud default) rather than blocking the UI.
+        workspaceCreationDisabled: cfg.workspace_creation_disabled === true,
       });
+      configStore.getState().setDaemonConfig({
+        daemonServerUrl: cfg.daemon_server_url,
+        daemonAppUrl: cfg.daemon_app_url,
+      });
+      if (cfg.posthog_key) {
+        initAnalytics({
+          key: cfg.posthog_key,
+          host: cfg.posthog_host || "",
+          appVersion: identity?.version,
+          environment: cfg.analytics_environment,
+        });
+      }
+    };
 
     const onAuthSuccess = (user: User) => {
       onLogin?.();
@@ -86,7 +82,23 @@ export function AuthInitializer({
       useAuthStore.setState({ user: null, isLoading: false });
     };
 
-    if (cookieAuth) {
+    const initializeAuthenticatedSession = (cfg?: AppConfigResponse) => {
+      const localAuth = cfg?.auth_mode === "local";
+      if (localAuth) {
+        api.setToken(null);
+        Promise.all([api.getMe(), api.listWorkspaces()])
+          .then(([user, wsList]) => {
+            onAuthSuccess(user);
+            qc.setQueryData(workspaceKeys.list(), wsList);
+          })
+          .catch((err) => {
+            logger.error("local auth init failed", err);
+            onAuthFailure();
+          });
+        return;
+      }
+
+      if (cookieAuth) {
       // Cookie mode: the HttpOnly cookie is sent automatically by the browser.
       // Call the API to check if the session is still valid.
       //
@@ -94,41 +106,52 @@ export function AuthInitializer({
       // resolve the slug without a second fetch. The active workspace itself
       // is derived from the URL by [workspaceSlug]/layout.tsx — no imperative
       // selection here.
+        Promise.all([api.getMe(), api.listWorkspaces()])
+          .then(([user, wsList]) => {
+            onAuthSuccess(user);
+            qc.setQueryData(workspaceKeys.list(), wsList);
+          })
+          .catch((err) => {
+            logger.error("cookie auth init failed", err);
+            onAuthFailure();
+          });
+        return;
+      }
+
+      // Token mode: read from localStorage (Electron / legacy).
+      const token = storage.getItem("multica_token");
+      if (!token) {
+        onLogout?.();
+        useAuthStore.setState({ isLoading: false });
+        return;
+      }
+
+      api.setToken(token);
+
       Promise.all([api.getMe(), api.listWorkspaces()])
         .then(([user, wsList]) => {
           onAuthSuccess(user);
+          // Seed React Query cache so the URL-driven layout can resolve the
+          // slug without a second fetch.
           qc.setQueryData(workspaceKeys.list(), wsList);
         })
         .catch((err) => {
-          logger.error("cookie auth init failed", err);
+          logger.error("auth init failed", err);
+          api.setToken(null);
+          setCurrentWorkspace(null, null);
+          storage.removeItem("multica_token");
           onAuthFailure();
         });
-      return;
-    }
+    };
 
-    // Token mode: read from localStorage (Electron / legacy).
-    const token = storage.getItem("multica_token");
-    if (!token) {
-      onLogout?.();
-      useAuthStore.setState({ isLoading: false });
-      return;
-    }
-
-    api.setToken(token);
-
-    Promise.all([api.getMe(), api.listWorkspaces()])
-      .then(([user, wsList]) => {
-        onAuthSuccess(user);
-        // Seed React Query cache so the URL-driven layout can resolve the
-        // slug without a second fetch.
-        qc.setQueryData(workspaceKeys.list(), wsList);
+    api
+      .getConfig()
+      .then((cfg) => {
+        applyConfig(cfg);
+        initializeAuthenticatedSession(cfg);
       })
-      .catch((err) => {
-        logger.error("auth init failed", err);
-        api.setToken(null);
-        setCurrentWorkspace(null, null);
-        storage.removeItem("multica_token");
-        onAuthFailure();
+      .catch(() => {
+        initializeAuthenticatedSession();
       });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);

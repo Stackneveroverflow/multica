@@ -77,6 +77,28 @@ func TestAuth_MissingHeader(t *testing.T) {
 	}
 }
 
+func TestAuth_LocalUserFallback(t *testing.T) {
+	mw := AuthWithOptions(nil, nil, nil, AuthOptions{
+		LocalUserID: func(context.Context) (string, error) {
+			return "local-user-id", nil
+		},
+	})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-User-ID"); got != "local-user-id" {
+			t.Fatalf("X-User-ID = %q, want local-user-id", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest("GET", "/api/me", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func TestAuth_NoBearerPrefix(t *testing.T) {
 	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		t.Fatal("next handler should not be called")
@@ -298,7 +320,6 @@ func TestAuth_PATCacheHit(t *testing.T) {
 		t.Fatalf("expected cached X-User-ID, got %q", gotUserID)
 	}
 }
-
 
 // TestAuth_MCN_NoVerifierConfigured pins the same fail-closed branch
 // as the daemon side: with no MULTICA_CLOUD_FLEET_URL configured, an

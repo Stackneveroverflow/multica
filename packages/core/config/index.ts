@@ -3,6 +3,7 @@ import { useStore } from "zustand";
 
 interface ConfigState {
   cdnDomain: string;
+  authMode: "auth" | "local" | string;
   allowSignup: boolean;
   googleClientId: string;
   daemonServerUrl: string;
@@ -13,6 +14,7 @@ interface ConfigState {
   workspaceCreationDisabled: boolean;
   setCdnDomain: (domain: string) => void;
   setAuthConfig: (config: {
+    authMode?: "auth" | "local" | string;
     allowSignup: boolean;
     googleClientId?: string;
     workspaceCreationDisabled?: boolean;
@@ -25,14 +27,15 @@ interface ConfigState {
 
 export const configStore = createStore<ConfigState>((set) => ({
   cdnDomain: "",
+  authMode: "auth",
   allowSignup: true,
   googleClientId: "",
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
   setCdnDomain: (domain) => set({ cdnDomain: domain }),
-  setAuthConfig: ({ allowSignup, googleClientId = "", workspaceCreationDisabled = false }) =>
-    set({ allowSignup, googleClientId, workspaceCreationDisabled }),
+  setAuthConfig: ({ authMode = "auth", allowSignup, googleClientId = "", workspaceCreationDisabled = false }) =>
+    set({ authMode, allowSignup, googleClientId, workspaceCreationDisabled }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
 }));

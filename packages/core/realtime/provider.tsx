@@ -19,6 +19,7 @@ import {
   subscribeToCurrentSlug,
 } from "../platform/workspace-storage";
 import { createLogger } from "../logger";
+import { useConfigStore } from "../config";
 import { useRealtimeSync, type RealtimeSyncStores } from "./use-realtime-sync";
 
 type EventHandler = (payload: unknown, actorId?: string, actorType?: string) => void;
@@ -56,6 +57,7 @@ export function WSProvider({
   onToast,
 }: WSProviderProps) {
   const user = authStore((s) => s.user);
+  const localAuth = useConfigStore((s) => s.authMode === "local");
   // Reactive read of the current workspace slug (URL-driven singleton in
   // packages/core/platform/workspace-storage.ts). When the workspace switches,
   // the useEffect below tears down the old WS connection and opens a new one
@@ -81,12 +83,12 @@ export function WSProvider({
 
     // In token mode we need a token from storage; in cookie mode the HttpOnly
     // cookie is sent automatically with the WS upgrade request.
-    const token = cookieAuth ? null : storage.getItem("multica_token");
-    if (!cookieAuth && !token) return;
+    const token = cookieAuth || localAuth ? null : storage.getItem("multica_token");
+    if (!cookieAuth && !localAuth && !token) return;
 
     const ws = new WSClient(wsUrl, {
       logger: createLogger("ws"),
-      cookieAuth,
+      cookieAuth: cookieAuth || localAuth,
       identity:
         identityPlatform || identityVersion || identityOS
           ? {
@@ -110,6 +112,7 @@ export function WSProvider({
     wsUrl,
     storage,
     cookieAuth,
+    localAuth,
     identityPlatform,
     identityVersion,
     identityOS,

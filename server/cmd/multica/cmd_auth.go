@@ -224,6 +224,24 @@ func detectOutboundIP(serverURL string) net.IP {
 
 func runAuthLoginBrowser(cmd *cobra.Command) error {
 	serverURL := resolveServerURL(cmd)
+	localAuth := false
+	{
+		ctx, cancel := cli.APIContext(context.Background())
+		localAuth = serverUsesLocalAuth(ctx, serverURL)
+		cancel()
+	}
+	if localAuth {
+		profile := resolveProfile(cmd)
+		cfg, _ := cli.LoadCLIConfigForProfile(profile)
+		cfg.Token = ""
+		cfg.ServerURL = serverURL
+		if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
+			return fmt.Errorf("failed to save config: %w", err)
+		}
+		fmt.Fprintln(os.Stderr, "Local auth mode detected. No login token is required.")
+		return nil
+	}
+
 	appURL := resolveAppURL(cmd)
 
 	flagHost, _ := cmd.Flags().GetString(callbackHostFlag)
@@ -402,6 +420,21 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	serverURL := resolveServerURL(cmd)
 
 	if token == "" {
+		ctx, cancel := cli.APIContext(context.Background())
+		defer cancel()
+		if serverUsesLocalAuth(ctx, serverURL) {
+			client := cli.NewAPIClient(serverURL, "", "")
+			var me struct {
+				Name  string `json:"name"`
+				Email string `json:"email"`
+			}
+			if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
+				fmt.Fprintf(os.Stderr, "Local auth mode is enabled, but the server did not return a local user: %v\n", err)
+				return nil
+			}
+			fmt.Fprintf(os.Stderr, "Server:  %s\nUser:    %s (%s)\nAuth:    local\n", serverURL, me.Name, me.Email)
+			return nil
+		}
 		fmt.Fprintln(os.Stderr, "Not authenticated. Run 'multica login' to authenticate.")
 		return nil
 	}

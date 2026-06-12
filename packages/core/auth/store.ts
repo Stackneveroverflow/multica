@@ -3,6 +3,7 @@ import type { User, StorageAdapter } from "../types";
 import { identify as identifyAnalytics, resetAnalytics } from "../analytics";
 import { ApiError, type ApiClient } from "../api/client";
 import { setCurrentWorkspace } from "../platform/workspace-storage";
+import { configStore } from "../config";
 
 export interface AuthStoreOptions {
   api: ApiClient;
@@ -114,6 +115,10 @@ export function createAuthStore(options: AuthStoreOptions) {
     },
 
     logout: () => {
+      if (configStore.getState().authMode === "local") {
+        set({ isLoading: false });
+        return;
+      }
       if (cookieAuth) {
         // Clear server-side HttpOnly cookie.
         api.logout().catch(() => {});

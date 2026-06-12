@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  AppConfigSchema,
   DashboardAgentRunTimeListSchema,
   DashboardUsageByAgentListSchema,
   DashboardUsageDailyListSchema,
@@ -15,6 +16,26 @@ import {
   UserSchema,
 } from "./schemas";
 import { parseWithFallback } from "./schema";
+
+describe("AppConfigSchema", () => {
+  it("preserves local auth mode from /api/config", () => {
+    const parsed = AppConfigSchema.parse({
+      cdn_domain: "",
+      auth_mode: "local",
+      allow_signup: false,
+    });
+    expect(parsed.auth_mode).toBe("local");
+    expect(parsed.allow_signup).toBe(false);
+  });
+
+  it("defaults missing auth_mode to legacy auth", () => {
+    const parsed = AppConfigSchema.parse({
+      cdn_domain: "",
+      allow_signup: true,
+    });
+    expect(parsed.auth_mode).toBe("auth");
+  });
+});
 
 const baseIssue = {
   id: "11111111-1111-1111-1111-111111111111",

@@ -103,6 +103,29 @@ func TestDaemonAuth_MissingAuth(t *testing.T) {
 	}
 }
 
+func TestDaemonAuth_LocalUserFallback(t *testing.T) {
+	mw := DaemonAuthWithOptions(nil, nil, nil, nil, DaemonAuthOptions{
+		LocalUserID: func(context.Context) (string, error) {
+			return "local-user-id", nil
+		},
+	})
+	handler := mw(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("X-User-ID"); got != "local-user-id" {
+			t.Fatalf("X-User-ID = %q, want local-user-id", got)
+		}
+		if got := DaemonAuthPathFromContext(r.Context()); got != DaemonAuthPathLocal {
+			t.Fatalf("auth path = %q, want %q", got, DaemonAuthPathLocal)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	req := httptest.NewRequest("POST", "/api/daemon/heartbeat", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // TestDaemonAuth_StripsClientSuppliedActorSource mirrors the
 // TestAuth_StripsClientSuppliedActorSource invariant for the daemon
 // auth path: a client supplying X-Actor-Source must NOT leak that
@@ -284,7 +307,6 @@ func TestDaemonAuth_MCN_FleetUnreachable(t *testing.T) {
 		t.Fatalf("expected 503 when fleet is unavailable, got %d", w.Code)
 	}
 }
-
 
 // TestDaemonAuth_MCN_OwnerNotInLocalDB pins the new owner-existence
 // guard end-to-end through the middleware. Cloud verifies the token

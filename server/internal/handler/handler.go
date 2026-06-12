@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -49,9 +50,14 @@ type dbExecutor interface {
 }
 
 type Config struct {
+	AuthMode            string
 	AllowSignup         bool
 	AllowedEmails       []string
 	AllowedEmailDomains []string
+	LocalUserName       string
+	LocalUserEmail      string
+	LocalWorkspaceName  string
+	LocalWorkspaceSlug  string
 	// DisableWorkspaceCreation, when true, makes POST /api/workspaces return
 	// 403 for every caller. There is no role/owner exception because the repo
 	// has no platform-admin concept; operators bootstrap the workspace with
@@ -156,6 +162,8 @@ type Handler struct {
 	// next replica waits the full TTL.
 	LarkHub *lark.Hub
 	cfg     Config
+
+	localIdentityMu sync.Mutex
 }
 
 func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *events.Bus, emailService *service.EmailService, store storage.Storage, cfSigner *auth.CloudFrontSigner, analyticsClient analytics.Client, cfg Config, daemonHubs ...*daemonws.Hub) *Handler {

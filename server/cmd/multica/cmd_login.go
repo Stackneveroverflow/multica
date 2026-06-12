@@ -75,9 +75,6 @@ func runLogin(cmd *cobra.Command, args []string) error {
 func autoWatchWorkspaces(cmd *cobra.Command) error {
 	serverURL := resolveServerURL(cmd)
 	token := resolveToken(cmd)
-	if token == "" {
-		return fmt.Errorf("not authenticated")
-	}
 
 	client := cli.NewAPIClient(serverURL, "", token)
 	ctx, cancel := cli.APIContext(context.Background())

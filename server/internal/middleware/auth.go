@@ -17,6 +17,12 @@ import (
 
 func uuidToString(u pgtype.UUID) string { return util.UUIDToString(u) }
 
+type LocalUserResolver func(context.Context) (string, error)
+
+type AuthOptions struct {
+	LocalUserID LocalUserResolver
+}
+
 // Auth middleware validates JWT tokens or Personal Access Tokens.
 // Token sources (in priority order):
 //  1. Authorization: Bearer <token> header (PAT or JWT)
@@ -35,6 +41,10 @@ func uuidToString(u pgtype.UUID) string { return util.UUIDToString(u) }
 // prefix branch — we don't fall through to the mul_ / JWT paths, since
 // an mcn_ string is by construction not a valid mul_ PAT or JWT.
 func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier) func(http.Handler) http.Handler {
+	return AuthWithOptions(queries, patCache, cloudPAT, AuthOptions{})
+}
+
+func AuthWithOptions(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATVerifier, opts AuthOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source is server-set only — any value supplied by
@@ -48,6 +58,17 @@ func Auth(queries *db.Queries, patCache *auth.PATCache, cloudPAT *auth.CloudPATV
 
 			tokenString, fromCookie := extractToken(r)
 			if tokenString == "" {
+				if opts.LocalUserID != nil {
+					userID, err := opts.LocalUserID(r.Context())
+					if err != nil {
+						slog.Warn("auth: local identity failed", "path", r.URL.Path, "error", err)
+						http.Error(w, `{"error":"local identity unavailable"}`, http.StatusInternalServerError)
+						return
+					}
+					r.Header.Set("X-User-ID", userID)
+					next.ServeHTTP(w, r)
+					return
+				}
 				slog.Debug("auth: no token found", "path", r.URL.Path)
 				http.Error(w, `{"error":"missing authorization"}`, http.StatusUnauthorized)
 				return

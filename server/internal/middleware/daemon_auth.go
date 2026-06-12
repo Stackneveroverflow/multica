@@ -28,6 +28,7 @@ const (
 	DaemonAuthPathPAT         = "pat"
 	DaemonAuthPathCloudPAT    = "cloud_pat"
 	DaemonAuthPathJWT         = "jwt"
+	DaemonAuthPathLocal       = "local"
 )
 
 // DaemonWorkspaceIDFromContext returns the workspace ID set by DaemonAuth middleware.
@@ -76,7 +77,15 @@ func WithDaemonContext(ctx context.Context, workspaceID, daemonID string) contex
 // branch — same fail-closed contract as the regular Auth middleware.
 //
 // Cache misses fall back to the original DB-backed behavior.
+type DaemonAuthOptions struct {
+	LocalUserID LocalUserResolver
+}
+
 func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.DaemonTokenCache, cloudPAT *auth.CloudPATVerifier) func(http.Handler) http.Handler {
+	return DaemonAuthWithOptions(queries, patCache, daemonCache, cloudPAT, DaemonAuthOptions{})
+}
+
+func DaemonAuthWithOptions(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.DaemonTokenCache, cloudPAT *auth.CloudPATVerifier, opts DaemonAuthOptions) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			// X-Actor-Source is server-set only — strip any
@@ -91,6 +100,18 @@ func DaemonAuth(queries *db.Queries, patCache *auth.PATCache, daemonCache *auth.
 
 			authHeader := r.Header.Get("Authorization")
 			if authHeader == "" {
+				if opts.LocalUserID != nil {
+					userID, err := opts.LocalUserID(r.Context())
+					if err != nil {
+						slog.Warn("daemon_auth: local identity failed", "path", r.URL.Path, "error", err)
+						writeError(w, http.StatusInternalServerError, "local identity unavailable")
+						return
+					}
+					r.Header.Set("X-User-ID", userID)
+					ctx := context.WithValue(r.Context(), ctxKeyDaemonAuthPath, DaemonAuthPathLocal)
+					next.ServeHTTP(w, r.WithContext(ctx))
+					return
+				}
 				slog.Debug("daemon_auth: missing authorization header", "path", r.URL.Path)
 				writeError(w, http.StatusUnauthorized, "missing authorization header")
 				return

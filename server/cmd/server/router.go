@@ -62,6 +62,17 @@ func allowedOrigins() []string {
 	return origins
 }
 
+func authModeFromEnv() string {
+	mode := strings.ToLower(strings.TrimSpace(os.Getenv("AUTH_MODE")))
+	if mode == "" {
+		return handler.AuthModeLocal
+	}
+	if mode == handler.AuthModeLocal {
+		return handler.AuthModeLocal
+	}
+	return "auth"
+}
+
 // parseTrustedProxies parses a comma-separated list of CIDR prefixes from the
 // MULTICA_TRUSTED_PROXIES env var. Invalid entries are dropped with a single
 // warn-line per entry rather than crashing the server — a typo in one CIDR
@@ -143,9 +154,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	cfSigner := auth.NewCloudFrontSignerFromEnv()
 
 	signupConfig := handler.Config{
+		AuthMode:                 authModeFromEnv(),
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
 		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
 		AllowedEmailDomains:      splitAndTrim(os.Getenv("ALLOWED_EMAIL_DOMAINS")),
+		LocalUserName:            os.Getenv("LOCAL_USER_NAME"),
+		LocalUserEmail:           os.Getenv("LOCAL_USER_EMAIL"),
+		LocalWorkspaceName:       os.Getenv("LOCAL_WORKSPACE_NAME"),
+		LocalWorkspaceSlug:       os.Getenv("LOCAL_WORKSPACE_SLUG"),
 		DisableWorkspaceCreation: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 		PublicURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
 		TrustedProxies:           parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
@@ -438,6 +454,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// WebSocket
 	mc := &membershipChecker{queries: queries}
 	pr := &patResolver{queries: queries, cache: patCache}
+	var localUserID middleware.LocalUserResolver
+	if signupConfig.LocalAuthEnabled() {
+		localUserID = h.ResolveLocalUserID
+	}
 	slugResolver := realtime.SlugResolver(func(ctx context.Context, slug string) (string, error) {
 		ws, err := queries.GetWorkspaceBySlug(ctx, slug)
 		if err != nil {
@@ -446,7 +466,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		return util.UUIDToString(ws.ID), nil
 	})
 	r.Get("/ws", func(w http.ResponseWriter, r *http.Request) {
-		realtime.HandleWebSocket(hub, mc, pr, slugResolver, w, r)
+		realtime.HandleWebSocket(hub, mc, pr, slugResolver, w, r, realtime.LocalUserResolver(localUserID))
 	})
 
 	// Local file serving (when using local storage)
@@ -490,7 +510,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Daemon API routes (require daemon token or valid user token)
 	r.Route("/api/daemon", func(r chi.Router) {
-		r.Use(middleware.DaemonAuth(queries, patCache, daemonTokenCache, cloudPATVerifier))
+		r.Use(middleware.DaemonAuthWithOptions(queries, patCache, daemonTokenCache, cloudPATVerifier, middleware.DaemonAuthOptions{LocalUserID: localUserID}))
 
 		r.Post("/register", h.DaemonRegister)
 		r.Post("/deregister", h.DaemonDeregister)
@@ -526,7 +546,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Protected API routes
 	r.Group(func(r chi.Router) {
-		r.Use(middleware.Auth(queries, patCache, cloudPATVerifier))
+		r.Use(middleware.AuthWithOptions(queries, patCache, cloudPATVerifier, middleware.AuthOptions{LocalUserID: localUserID}))
 		r.Use(middleware.RefreshCloudFrontCookies(cfSigner))
 
 		// --- User-scoped routes (no workspace context required) ---

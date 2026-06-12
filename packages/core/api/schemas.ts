@@ -25,6 +25,7 @@ import type { CloudRuntimeNode } from "../runtimes/cloud-runtime";
 
 export interface AppConfigResponse {
   cdn_domain: string;
+  auth_mode?: string;
   allow_signup: boolean;
   google_client_id?: string;
   posthog_key?: string;
@@ -154,6 +155,7 @@ const BooleanWithDefaultSchema = (fallback: boolean) =>
 
 export const AppConfigSchema = z.object({
   cdn_domain: z.string().default(""),
+  auth_mode: z.string().default("auth"),
   allow_signup: BooleanWithDefaultSchema(true),
   google_client_id: OptionalStringSchema,
   posthog_key: OptionalStringSchema,
@@ -166,6 +168,7 @@ export const AppConfigSchema = z.object({
 
 export const EMPTY_APP_CONFIG: AppConfigResponse = {
   cdn_domain: "",
+  auth_mode: "auth",
   allow_signup: true,
   google_client_id: "",
   daemon_server_url: "",

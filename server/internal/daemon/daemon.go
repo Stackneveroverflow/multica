@@ -8,6 +8,7 @@ import (
 	"hash/fnv"
 	"log/slog"
 	"math/rand"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -120,6 +121,7 @@ type Daemon struct {
 	updating      atomic.Bool        // prevents concurrent update attempts
 	activeTasks   atomic.Int64       // number of tasks currently in handleTask; exposed via /health
 	ready         atomic.Bool        // false until preflight completes; gates /health status (starting -> running)
+	localAuth     atomic.Bool        // true when the server advertises AUTH_MODE=local
 
 	// claimMu guards pauseClaims and claimsInFlight. It is held only for the
 	// microseconds it takes to make a decision; ClaimTask itself runs without
@@ -705,6 +707,12 @@ func (d *Daemon) resolveAuth() error {
 		return fmt.Errorf("load CLI config: %w", err)
 	}
 	if cfg.Token == "" {
+		if d.serverUsesLocalAuth(context.Background()) {
+			d.localAuth.Store(true)
+			d.client.SetToken("")
+			d.logger.Info("using local auth mode")
+			return nil
+		}
 		loginHint := "'multica login'"
 		if d.cfg.Profile != "" {
 			loginHint = fmt.Sprintf("'multica login --profile %s'", d.cfg.Profile)
@@ -716,6 +724,31 @@ func (d *Daemon) resolveAuth() error {
 	d.logger.Info("authenticated")
 	d.logger.Debug("auth token loaded", "profile", d.cfg.Profile, "token_len", len(cfg.Token))
 	return nil
+}
+
+func (d *Daemon) serverUsesLocalAuth(parent context.Context) bool {
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, strings.TrimRight(d.cfg.ServerBaseURL, "/")+"/api/config", nil)
+	if err != nil {
+		return false
+	}
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 400 {
+		return false
+	}
+	var cfg struct {
+		AuthMode string `json:"auth_mode"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(cfg.AuthMode), "local")
 }
 
 // allRuntimeIDs returns all runtime IDs across all watched workspaces.
@@ -1111,6 +1144,11 @@ func (d *Daemon) tokenRenewalLoop(ctx context.Context) {
 // handle them. Failures are debug-level except for 401, which gets a
 // user-actionable warning.
 func (d *Daemon) tryRenewToken(ctx context.Context) {
+	if d.localAuth.Load() {
+		d.logger.Debug("auth token renewal skipped in local auth mode")
+		return
+	}
+
 	reqCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 
